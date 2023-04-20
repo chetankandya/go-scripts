@@ -1,36 +1,48 @@
 from kubernetes import client, config
+import os
 
-# Get deployment name from command line argument
-deployment_name = input("Enter the name of the deployment: ")
+def get_cpu_cores(deployment_name):
+    # Load Kubernetes configuration from default location
+    config.load_kube_config()
 
-# Load kubeconfig file
-config.load_kube_config()
+    # Create a Kubernetes API client
+    api_instance = client.AppsV1Api()
 
-# Create a Kubernetes client
-api_instance = client.AppsV1Api()
+    # Get the deployment object
+    try:
+        deployment = api_instance.read_namespaced_deployment(deployment_name, "default")
+    except client.rest.ApiException as e:
+        print("Error getting deployment: %s\n" % e)
+        return
 
-# Get the deployment object
-try:
-    deployment = api_instance.read_namespaced_deployment(deployment_name, "default")
-except client.exceptions.ApiException as e:
-    if e.status == 404:
-        print(f"Deployment {deployment_name} not found.")
-    else:
-        print(f"Error occurred: {e}")
-    exit()
+    # Get the pod selector labels from the deployment
+    selector = deployment.spec.selector.match_labels
 
-# Get the pod selector labels from the deployment
-selector = deployment.spec.selector.match_labels
+    # Create a Kubernetes API client for pods
+    api_instance = client.CoreV1Api()
 
-# Create a Kubernetes client for getting pod information
-api_instance = client.CoreV1Api()
+    # Get the pods that match the selector
+    try:
+        pods = api_instance.list_namespaced_pod("default", label_selector=selector)
+    except client.rest.ApiException as e:
+        print("Error getting pods: %s\n" % e)
+        return
 
-# Get the pods that match the selector
-pods = api_instance.list_namespaced_pod("default", label_selector=selector)
+    # Print the CPU core(s) on which each container is running
+    for pod in pods.items:
+        print("Pod %s:" % pod.metadata.name)
+        for container in pod.spec.containers:
+            container_name = container.name
+            try:
+                # Get the logs for the container
+                pod_logs = api_instance.read_namespaced_pod_log(name=pod.metadata.name,
+                                                                namespace="default",
+                                                                container=container_name)
+                # Extract the CPU core number from the logs
+                cpu_core = pod_logs.split()[-1].decode()
+                print("Container %s is running on CPU core %s" % (container_name, cpu_core))
+            except client.rest.ApiException as e:
+                print("Error getting logs for container %s in pod %s: %s" % (container_name, pod.metadata.name, e))
 
-# Print the CPU core(s) on which each container is running
-for pod in pods.items:
-    print(f"Pod {pod.metadata.name}:")
-    for container in pod.spec.containers:
-        logs = api_instance.read_namespaced_pod_log(pod.metadata.name, "default", container=container.name)
-        print(f"Container {container.name} is running on CPU core {logs}")
+# Example usage: Get the CPU cores for a deployment named "my-deployment"
+get_cpu_cores("my-deployment")
